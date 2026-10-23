@@ -8,9 +8,9 @@ const BIG_HOLD_MS = 700
 const BLINK_MS = 500
 // Characters a second at the least, and how long an entry may take at most.
 const SPEED: Record<Speed, { cps: number; budgetMs: number }> = {
-  lento: { cps: 350, budgetMs: 3000 },
-  normal: { cps: 1100, budgetMs: 1500 },
-  rapido: { cps: 3000, budgetMs: 700 },
+  lento: { cps: 30, budgetMs: 12_000 },
+  normal: { cps: 70, budgetMs: 6000 },
+  rapido: { cps: 250, budgetMs: 2500 },
 }
 
 /** How many entries waiting speed the one playing up, at most. */

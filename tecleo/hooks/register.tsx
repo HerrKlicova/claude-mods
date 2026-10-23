@@ -19,7 +19,7 @@ const MAX_PENDING = 5
 const HANDED = 3
 const RECENT_FILES = 6
 // A tick of the mod's own player.
-const TICK_MS = 80
+const TICK_MS = 50
 
 const entries = atom({ plugin: 'tecleo', key: 'entries' } as const, [], {
   shape: 'entries-1',
@@ -84,7 +84,7 @@ function scheduleClose($: EngineInterface, waiting: number): void {
   idle = undefined
   if (settings.closeAfter <= 0) return
   const delay =
-    settings.closeAfter * 1000 + Math.min(waiting, MAX_PENDING) * 1600
+    settings.closeAfter * 1000 + Math.min(waiting, MAX_PENDING) * 6500
   idle = $.clock.after(delay, () => {
     idle = undefined
     void $.ui.close({ id: PANE }).catch(() => undefined)

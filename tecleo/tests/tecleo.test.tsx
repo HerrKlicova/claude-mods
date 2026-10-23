@@ -80,9 +80,10 @@ test('an edit opens the pane and is typed in, then played', async ($, on) => {
   expect(start).not.toContain('sin token')
 
   // Part way: some of the new code is there, not all of it.
-  await ui.advance(400)
+  await ui.advance(500)
   const middle = texts(await ui.drawn({ in: 'typer' }))
   expect(middle).toContain('if (!token) {')
+  expect(middle).not.toContain("log.warn('sin token')")
 
   // Done: the whole edit stands and the entry is posted as played.
   await ui.advance(3000)
