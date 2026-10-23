@@ -14,6 +14,7 @@ import {
   summaryOf,
   terminalEntryOf,
 } from './entries'
+import { assetPath, isWindowsPath, windowsSoundArgv } from './sound'
 import { MAX_RUSH, drawEntry, durationOf, remainingMs } from './view'
 
 const PANE = 'tecleo'
@@ -28,6 +29,8 @@ const RECENT_FILES = 6
 const TICK_MS = 50
 const SOUND = 'sounds/tecleo.wav'
 const SOUND_GAIN = 0.5
+// A loop on Windows stops by itself after this, whatever happens.
+const SOUND_MAX_MS = 10 * 60_000
 
 const entries = atom({ plugin: 'tecleo', key: 'entries' } as const, [], {
   shape: 'entries-1',
@@ -162,12 +165,34 @@ async function syncSound($: EngineInterface): Promise<void> {
   if (sound !== undefined) return
   const stop = new AbortController()
   sound = stop
+  const done = () => {
+    if (sound === stop) sound = undefined
+  }
+  if (isWindowsPath($.plugin.root)) {
+    void playOnWindows($, stop.signal).finally(done)
+
+    return
+  }
   void $.audio
     .play({ asset: SOUND }, { shouldLoop: true, signal: stop.signal, gain: SOUND_GAIN })
     .catch(() => undefined)
-    .finally(() => {
-      if (sound === stop) sound = undefined
-    })
+    .finally(done)
+}
+
+// Loops the clip through PowerShell; leaving the read kills it, sound and all.
+async function playOnWindows(
+  $: EngineInterface,
+  signal: AbortSignal,
+): Promise<void> {
+  const wav = assetPath($.plugin.root, SOUND)
+  const until = Date.now() + SOUND_MAX_MS
+  try {
+    for await (const _ of $.process.spawn({ argv: windowsSoundArgv(wav) })) {
+      if (signal.aborted || Date.now() > until) break
+    }
+  } catch {
+    // No PowerShell: no sound.
+  }
 }
 
 // An entry has been played: move on, and once the queue empties say what

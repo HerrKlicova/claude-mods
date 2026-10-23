@@ -1,6 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import { splitPath } from '../hooks/entries'
+import { assetPath, windowsSoundArgv } from '../hooks/sound'
 
 const PANE = {
   plugin: 'tecleo',
@@ -564,4 +565,14 @@ test('the sound turns on and off from the pane and from /tecleo sonido', async (
   expect(again.text).toContain('activado')
   expect(played).toHaveLength(2)
   await ui.unmount()
+})
+
+test('on Windows the clip plays through PowerShell from the plugin folder', () => {
+  const wav = assetPath('C:\\Users\\eu\\.claude\\plugins\\tecleo\\', 'sounds/tecleo.wav')
+  expect(wav).toBe('C:\\Users\\eu\\.claude\\plugins\\tecleo\\sounds\\tecleo.wav')
+  expect(assetPath('/home/eu/tecleo', 'sounds/tecleo.wav')).toBe('/home/eu/tecleo/sounds/tecleo.wav')
+  const argv = windowsSoundArgv("C:\\Users\\o'neil\\tecleo.wav")
+  expect(argv[0]).toBe('powershell.exe')
+  expect(argv[4]).toContain("SoundPlayer 'C:\\Users\\o''neil\\tecleo.wav'")
+  expect(argv[4]).toContain('PlayLooping()')
 })

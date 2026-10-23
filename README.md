@@ -9,7 +9,7 @@ Cada vez que Claude escribe o edita un archivo, se abre un panel al lado del cha
 Controles del panel (también con su tecla cuando el panel tiene el foco):
 
 - **Pausa / Seguir** (`p`), **Saltar** la entrada actual (`s`), **Velocidad** (`v`, pasa por lento, normal y rápido sin reiniciar).
-- **Sonido** (`o`): enciende o apaga el tecleo sonoro. En la terminal solo suena en macOS.
+- **Sonido** (`o`): enciende o apaga el tecleo sonoro. Suena en macOS y en Windows (en Windows lo reproduce PowerShell); en Linux no.
 - **Abrir en editor** (`e`): abre el archivo en la línea donde terminó de teclear.
 - **Historial** (`h`): las 30 últimas entradas; pulsa cualquiera para volver a verla. Debajo, «Tocados:» lista los archivos tocados, aunque sea uno solo.
 - Si llegan más de 5 cambios de golpe, los antiguos se saltan y el panel avisa con «N cambios saltados» y un botón **Ver** para reproducirlos.
@@ -20,7 +20,7 @@ Comandos: `/tecleo` abre o cierra el panel, y `/tecleo demo` reproduce una edici
 
 Por defecto teclea unas 70 letras por segundo; un cambio largo acelera para no tardar más de unos 6 segundos. En la terminal la animación va a 30 fotogramas por segundo; en la app de escritorio, VS Code y el móvil la mueve el propio mod, a unos 20.
 
-Opciones (en `/config` o al instalar): `velocidad` (lento, normal o rapido), `abrirSolo` (abrir el panel al editar), `cerrarTras` (segundos sin escribir antes de cerrarlo; 0 lo deja abierto), `sonido` (un tecleo suave mientras escribe; apagado por defecto; en la terminal solo suena en macOS) y `editor` (el comando para abrir archivos, por defecto `code -g {archivo}:{linea}`; por ejemplo `cursor -g {archivo}:{linea}` o `subl {archivo}:{linea}`).
+Opciones (en `/config` o al instalar): `velocidad` (lento, normal o rapido), `abrirSolo` (abrir el panel al editar), `cerrarTras` (segundos sin escribir antes de cerrarlo; 0 lo deja abierto), `sonido` (un tecleo suave mientras escribe; apagado por defecto; suena en macOS y Windows, no en Linux) y `editor` (el comando para abrir archivos, por defecto `code -g {archivo}:{linea}`; por ejemplo `cursor -g {archivo}:{linea}` o `subl {archivo}:{linea}`).
 
 ### Actualizar
 
