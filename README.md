@@ -9,13 +9,14 @@ Cada vez que Claude escribe o edita un archivo, se abre un panel al lado del cha
 Controles del panel (también con su tecla cuando el panel tiene el foco):
 
 - **Pausa / Seguir** (`p`), **Saltar** la entrada actual (`s`), **Velocidad** (`v`, pasa por lento, normal y rápido sin reiniciar).
+- **Sonido** (`o`): enciende o apaga el tecleo sonoro. En la terminal solo suena en macOS.
 - **Abrir en editor** (`e`): abre el archivo en la línea donde terminó de teclear.
 - **Historial** (`h`): las 30 últimas entradas; pulsa cualquiera para volver a verla. Debajo, «Tocados:» lista los archivos tocados, aunque sea uno solo.
 - Si llegan más de 5 cambios de golpe, los antiguos se saltan y el panel avisa con «N cambios saltados» y un botón **Ver** para reproducirlos.
 - Cuando se vacía la cola, un resumen: «✓ 3 archivos, +42 −7».
 - Si Claude cambia archivos con Bash o PowerShell (`>`, `tee`, `sed -i`, `mv`, `Set-Content`…), aparece un aviso «archivo cambiado por terminal» con el comando y los archivos que nombra.
 
-Comandos: `/tecleo` abre o cierra el panel, y `/tecleo demo` reproduce una edición de ejemplo. También `/tecleo pausa` (pausa o reanuda), `/tecleo seguir`, `/tecleo saltar`, `/tecleo lento`, `/tecleo normal`, `/tecleo rapido`, `/tecleo historial` y `/tecleo editor`.
+Comandos: `/tecleo` abre o cierra el panel, y `/tecleo demo` reproduce una edición de ejemplo. También `/tecleo pausa` (pausa o reanuda), `/tecleo seguir`, `/tecleo saltar`, `/tecleo lento`, `/tecleo normal`, `/tecleo rapido`, `/tecleo sonido`, `/tecleo historial` y `/tecleo editor`.
 
 Por defecto teclea unas 70 letras por segundo; un cambio largo acelera para no tardar más de unos 6 segundos. En la terminal la animación va a 30 fotogramas por segundo; en la app de escritorio, VS Code y el móvil la mueve el propio mod, a unos 20.
 

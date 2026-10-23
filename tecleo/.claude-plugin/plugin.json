@@ -1,6 +1,6 @@
 {
   "name": "tecleo",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Panel al lado del chat donde el código que Claude escribe o edita se va tecleando solo.",
   "types": "./types/index.d.ts",
   "userConfig": {

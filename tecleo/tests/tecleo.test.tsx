@@ -536,3 +536,32 @@ test('with sonido on, a typing sound loops while an entry types', { options: { s
   expect(played).toHaveLength(1)
   expect(played[0]).toMatchObject({ clip: { asset: 'sounds/tecleo.wav' }, shouldLoop: true })
 })
+
+test('the sound turns on and off from the pane and from /tecleo sonido', async ($, on) => {
+  const clock = mock.clock(on)
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('command.register', () => ({ value: { command: 'tecleo' } }))
+  const played: unknown[] = []
+  on('audio.play', (_, e) => {
+    played.push(e)
+
+    return new Promise(() => undefined) as never
+  })
+  on('tool.call', () => ({ result: EDIT_RESULT }))
+  await $.tool.call({ tool: 'Edit', file_path: '/repo/src/auth.ts', old_string: 'a', new_string: 'b' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(texts(await ui.drawn())).toContain('🔇 Sonido')
+  expect(played).toHaveLength(0)
+
+  await ui.press({ key: 'sonido' } as never)
+  expect(texts(await ui.drawn())).toContain('🔊 Sonido')
+  expect(played).toHaveLength(1)
+
+  const off = await $.command.run({ command: 'tecleo', args: 'sonido' } as never)
+  expect(off.text).toContain('desactivado')
+  expect(texts(await ui.drawn())).toContain('🔇 Sonido')
+  const again = await $.command.run({ command: 'tecleo', args: 'sonido' } as never)
+  expect(again.text).toContain('activado')
+  expect(played).toHaveLength(2)
+  await ui.unmount()
+})

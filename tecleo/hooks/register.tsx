@@ -46,6 +46,7 @@ const picked = atom({ plugin: 'tecleo', key: 'speed' } as const, null)
 const skipped = atom({ plugin: 'tecleo', key: 'skipped' } as const, [])
 const runFrom = atom({ plugin: 'tecleo', key: 'runFrom' } as const, 0)
 const summary = atom({ plugin: 'tecleo', key: 'summary' } as const, null)
+const soundPick = atom({ plugin: 'tecleo', key: 'sonido' } as const, null)
 const showHistory = atom(
   { plugin: 'tecleo', key: 'showHistory' } as const,
   false,
@@ -105,6 +106,15 @@ function pendingOf(list: readonly Entry[], head: number): Entry[] {
   return list.filter(entry => entry.id > head)
 }
 
+async function soundOn($: EngineInterface): Promise<boolean> {
+  return (await read($, soundPick)) ?? settings.sound
+}
+
+async function setSound($: EngineInterface, on: boolean): Promise<void> {
+  await update($, soundPick, () => on)
+  await syncSound($)
+}
+
 async function speedOf($: EngineInterface): Promise<Speed> {
   return (await read($, picked)) ?? settings.speed
 }
@@ -139,7 +149,7 @@ async function scheduleClose($: EngineInterface): Promise<void> {
 async function syncSound($: EngineInterface): Promise<void> {
   const head = (await queueOf($))[0]
   const isTyping =
-    settings.sound &&
+    (await soundOn($)) &&
     head !== undefined &&
     head.kind !== 'terminal' &&
     !(await read($, paused))
@@ -359,7 +369,7 @@ async function afterShell<R extends ToolCallResult>(
 }
 
 const HELP =
-  'Uso: /tecleo [demo | pausa | seguir | saltar | lento | normal | rapido | historial | editor]'
+  'Uso: /tecleo [demo | pausa | seguir | saltar | lento | normal | rapido | sonido | historial | editor]'
 
 export const register: Register = (on, options) => {
   settings = {
@@ -381,7 +391,7 @@ export const register: Register = (on, options) => {
       name: 'tecleo',
       description:
         'Abre o cierra el panel donde se teclea el código que escribe Claude; también pausa, salta, cambia la velocidad o lo prueba ("demo")',
-      argumentHint: '[demo|pausa|seguir|saltar|lento|normal|rapido|historial|editor]',
+      argumentHint: '[demo|pausa|seguir|saltar|lento|normal|rapido|sonido|historial|editor]',
     })
 
     return next(e)
@@ -415,6 +425,12 @@ export const register: Register = (on, options) => {
         return {
           text: (await skip($)) ? 'Entrada saltada.' : 'No hay nada que saltar.',
         }
+      case 'sonido': {
+        const isOn = !(await soundOn($))
+        await setSound($, isOn)
+
+        return { text: isOn ? 'Sonido de tecleo activado.' : 'Sonido de tecleo desactivado.' }
+      }
       case 'historial':
         await update($, showHistory, () => true)
         await $.ui.open({ id: PANE, title: TITLE })
@@ -493,6 +509,7 @@ export const register: Register = (on, options) => {
     )
     const total = await read($, summary)
     const isHistoryOpen = await read($, showHistory)
+    const isSoundOn = await soundOn($)
 
     const controls = (
       <Box flexDirection="row" flexWrap="wrap" columnGap={1} marginTop={1}>
@@ -523,6 +540,13 @@ export const register: Register = (on, options) => {
           }}
         >
           Abrir en editor
+        </Button>
+        <Button
+          key="sonido"
+          hotkey="o"
+          onPress={() => setSound($, !isSoundOn)}
+        >
+          {isSoundOn ? '🔊 Sonido' : '🔇 Sonido'}
         </Button>
         <Button
           key="historial"

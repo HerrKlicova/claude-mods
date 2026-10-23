@@ -70,6 +70,8 @@ declare module 'claude-code' {
       runFrom: number
       /** What the last run came to, shown once the queue empties. */
       summary: Summary | null
+      /** Sound turned on or off in the pane or by command; null keeps the setting. */
+      sonido: boolean | null
       /** The full history is open in the pane. */
       showHistory: boolean
     }
