@@ -4,11 +4,20 @@ Mods para Claude Code.
 
 ## tecleo
 
-Cada vez que Claude escribe o edita un archivo, se abre un panel al lado del chat con la ruta del archivo. El código nuevo se va tecleando rápido, con resaltado de sintaxis y cursor parpadeante. En una edición, las líneas que se quitan salen tachadas y se apagan, y las nuevas se teclean en su sitio. Si llegan varias ediciones seguidas, se encolan y la velocidad sube. Los archivos de más de 400 líneas se muestran de golpe. El panel se cierra solo cuando Claude lleva un rato sin escribir. El comando `/tecleo` lo abre o lo cierra a mano. Abajo aparecen los archivos tocados en la sesión: pulsa uno para volver a verlo.
+Cada vez que Claude escribe o edita un archivo, se abre un panel al lado del chat con la ruta del archivo. El código nuevo se va tecleando rápido, con resaltado de sintaxis y cursor parpadeante. En una edición, las líneas que se quitan salen tachadas y se apagan, y las nuevas se teclean en su sitio. Si llegan varias ediciones seguidas, se encolan y la velocidad sube. Los archivos de más de 400 líneas se muestran de golpe. El panel se cierra solo cuando Claude lleva un rato sin escribir. El comando `/tecleo` lo abre o lo cierra a mano, y `/tecleo demo` reproduce una edición de ejemplo para probarlo. Abajo aparecen los archivos tocados en la sesión: pulsa uno para volver a verlo.
 
-La animación funciona en la CLI (terminal) y en la app de escritorio. En VS Code y en el móvil el panel muestra el diff final sin animar.
+En la terminal la animación va a 30 fotogramas por segundo. En la app de escritorio, VS Code y el móvil la mueve el propio mod, a unos 12 fotogramas por segundo.
 
 Opciones (en `/config` o al instalar): `velocidad` (lento, normal o rapido), `abrirSolo` (abrir el panel al editar) y `cerrarTras` (segundos sin escribir antes de cerrarlo; 0 lo deja abierto).
+
+### Actualizar
+
+Desde una shell, y luego reinicia Claude:
+
+```
+claude plugin marketplace update claude-mods
+claude plugin update tecleo@claude-mods
+```
 
 ### Instalar
 

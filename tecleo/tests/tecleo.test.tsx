@@ -100,28 +100,50 @@ test('an edit opens the pane and is typed in, then played', async ($, on) => {
   await ui.unmount()
 })
 
-test('a surface with no Client shows the diff whole', async ($, on) => {
+test('without a Client the mod types it itself: desktop, vscode, mobile', async ($, on) => {
   const clock = mock.clock(on)
   on('ui.open', () => ({ value: { isPlaced: true } }))
-  on('tool.call', () => ({
-    result: {
-      type: 'create',
-      filePath: '/repo/hola.py',
-      content: 'print("hola")\n',
-      structuredPatch: [],
-      originalFile: null,
-    },
-  }))
-  await $.tool.call({ tool: 'Write', file_path: '/repo/hola.py', content: 'print("hola")\n' })
+  on('tool.call', () => ({ result: EDIT_RESULT }))
 
-  for (const surface of ['vscode', 'mobile'] as const) {
+  for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
+    await $.tool.call({
+      tool: 'Edit',
+      file_path: '/repo/src/auth.ts',
+      old_string: 'if (!token) return null',
+      new_string: EDIT_RESULT.newString,
+    })
     const ui = await $.ui.mount({ ...PANE, surface })
-    const tree = texts(await ui.drawn())
-    expect(tree).toContain('hola.py')
-    expect(tree).toContain('nuevo')
-    expect(tree).toContain('+print(\\"hola\\")')
+    const start = texts(await ui.drawn())
+    expect(start).toContain('auth.ts')
+    expect(start).toContain('-if (!token) return null')
+    expect(start).not.toContain('sin token')
+
+    // Still taking the old line out: nothing new typed yet.
+    for (let i = 0; i < 2; i++) await clock.advance(80)
+    expect(texts(await ui.drawn())).not.toContain('+if')
+
+    for (let i = 0; i < 40; i++) await clock.advance(80)
+    const end = texts(await ui.drawn())
+    expect(end).toContain("+  log.warn('sin token')")
+    expect(end).toContain('+}')
+    expect(end).toContain(' return user')
     await ui.unmount()
   }
+})
+
+test('/tecleo demo plays a sample edit', async ($, on) => {
+  const clock = mock.clock(on)
+  on('command.register', () => ({ value: { command: 'tecleo' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const ran = await $.command.run({ command: 'tecleo', args: 'demo' } as never)
+  expect(ran.text).toContain('Demo')
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  for (let i = 0; i < 40; i++) await clock.advance(80)
+  expect(texts(await ui.drawn())).toContain("console.warn('sin nombre')")
+  await ui.unmount()
 })
 
 test('a refused or failed call shows nothing and passes through', async ($, on) => {
@@ -153,7 +175,7 @@ test('a huge file is shown at once, not typed', async ($, on) => {
   }))
   await $.tool.call({ tool: 'Write', file_path: '/big.txt', content })
 
-  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await ui.resize({ columns: 60, rows: 20, in: 'typer' })
   await ui.advance(66)
   const tree = texts(await ui.drawn({ in: 'typer' }))

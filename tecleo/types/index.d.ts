@@ -37,6 +37,8 @@ declare module 'claude-code' {
       playhead: number
       /** An entry the person asked to see again, 0 for none. */
       replay: number
+      /** The entry the mod's own player is typing, and how far in. */
+      stage: { id: number; elapsed: number }
     }
   }
 }

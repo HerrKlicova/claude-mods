@@ -7,7 +7,8 @@ import type {
 } from 'claude-code'
 
 import type { Entry, Speed, TyperPost, TyperProps } from '../types'
-import { diffOf, entryOf, splitPath } from './entries'
+import { entryOf, splitPath } from './entries'
+import { MAX_RUSH, drawEntry, durationOf } from './view'
 
 const PANE = 'tecleo'
 const TITLE = 'Tecleo'
@@ -17,12 +18,40 @@ const MAX_PENDING = 5
 // How many entries the Client is handed at once.
 const HANDED = 3
 const RECENT_FILES = 6
+// A tick of the mod's own player.
+const TICK_MS = 80
 
 const entries = atom({ plugin: 'tecleo', key: 'entries' } as const, [], {
   shape: 'entries-1',
 })
 const playhead = atom({ plugin: 'tecleo', key: 'playhead' } as const, 0)
 const replay = atom({ plugin: 'tecleo', key: 'replay' } as const, 0)
+// Where the mod's own player stands, on surfaces that draw no Client.
+const stage = atom({ plugin: 'tecleo', key: 'stage' } as const, {
+  id: 0,
+  elapsed: 0,
+})
+
+// What `/tecleo demo` plays.
+const DEMO = {
+  filePath: '/demo/saludo.ts',
+  structuredPatch: [
+    {
+      oldStart: 1,
+      newStart: 1,
+      lines: [
+        ' export function saludo(nombre: string): string {',
+        "-  if (!nombre) return 'hola'",
+        '+  if (!nombre) {',
+        "+    console.warn('sin nombre')",
+        "+    return 'hola'",
+        '+  }',
+        '   return `hola, ${nombre}`',
+        ' }',
+      ],
+    },
+  ],
+}
 
 const SPEEDS: readonly Speed[] = ['lento', 'normal', 'rapido']
 
@@ -30,9 +59,22 @@ type Settings = { speed: Speed; autoOpen: boolean; closeAfter: number }
 
 let settings: Settings = { speed: 'normal', autoOpen: true, closeAfter: 8 }
 let idle: Timer | undefined
+let player: Timer | undefined
 
 function pendingOf(list: readonly Entry[], head: number): Entry[] {
   return list.filter(entry => entry.id > head)
+}
+
+// What plays next: an entry asked for again first, then those waiting.
+async function queueOf($: EngineInterface): Promise<Entry[]> {
+  const list = await read($, entries)
+  const waiting = pendingOf(list, await read($, playhead))
+  const again = await read($, replay)
+  const replayed = list.find(entry => entry.id === again)
+
+  return replayed === undefined
+    ? waiting
+    : [replayed, ...waiting.filter(entry => entry.id !== replayed.id)]
 }
 
 // Closes the pane once Claude has stopped writing for a while; each new
@@ -46,6 +88,48 @@ function scheduleClose($: EngineInterface, waiting: number): void {
   idle = $.clock.after(delay, () => {
     idle = undefined
     void $.ui.close({ id: PANE }).catch(() => undefined)
+  })
+}
+
+// An entry has been played: move on, and push the close back.
+async function finish($: EngineInterface, done: number): Promise<void> {
+  if ((await read($, replay)) === done) await update($, replay, () => 0)
+  else await update($, playhead, now => Math.max(now, done))
+  scheduleClose($, (await queueOf($)).length)
+}
+
+// The mod's own player, for surfaces that draw no Client: a few frames a
+// second through the pane's state, stopping once nothing waits.
+async function tick($: EngineInterface): Promise<void> {
+  const queue = await queueOf($)
+  const head = queue[0]
+  if (head === undefined) {
+    player?.cancel()
+    player = undefined
+
+    return
+  }
+  const now = await read($, stage)
+  if (now.id !== head.id) {
+    await update($, stage, () => ({ id: head.id, elapsed: 0 }))
+
+    return
+  }
+  const rush = Math.min(MAX_RUSH, Math.max(1, queue.length))
+  const elapsed = now.elapsed + TICK_MS * rush
+  if (elapsed >= durationOf(head, settings.speed)) {
+    await update($, stage, () => ({ id: 0, elapsed: 0 }))
+    await finish($, head.id)
+
+    return
+  }
+  await update($, stage, () => ({ id: head.id, elapsed }))
+}
+
+function startPlayer($: EngineInterface): void {
+  if (player !== undefined) return
+  player = $.clock.every(TICK_MS, () => {
+    void tick($).catch(() => undefined)
   })
 }
 
@@ -103,13 +187,21 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'tecleo',
-      description: 'Abre o cierra el panel donde se teclea el código que escribe Claude',
+      description:
+        'Abre o cierra el panel donde se teclea el código que escribe Claude; "demo" lo prueba',
+      argumentHint: '[demo]',
     })
 
     return next(e)
   })
 
-  on('command.run', { command: 'tecleo' }, async $ => {
+  on('command.run', { command: 'tecleo' }, async ($, e) => {
+    if (e.args.trim() === 'demo') {
+      await record($, 'Edit', {}, DEMO)
+      await $.ui.open({ id: PANE, title: TITLE })
+
+      return { text: 'Demo de tecleo en marcha.' }
+    }
     const panes = await $.ui.panes()
     if (panes.some(pane => pane.id === PANE)) {
       idle?.cancel()
@@ -137,24 +229,21 @@ export const register: Register = (on, options) => {
   on('ui.message', async ($, e, next) => {
     const data = e.data as Partial<TyperPost> | null
     if (typeof data?.done !== 'number') return next(e)
-    const done = data.done
-    if ((await read($, replay)) === done) await update($, replay, () => 0)
-    else await update($, playhead, now => Math.max(now, done))
-    const list = await read($, entries)
-    scheduleClose($, pendingOf(list, await read($, playhead)).length)
+    await finish($, data.done)
 
     return next(e)
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
-    const { Box, Text, Button, Code } = els
+    const { Box, Text, Button } = els
     const list = await read($, entries)
-    const head = await read($, playhead)
-    const again = await read($, replay)
-    const replayed = list.find(entry => entry.id === again)
-    const waiting = pendingOf(list, head)
-    const last = list[list.length - 1] ?? null
+    const queue = await queueOf($)
+    const last = list[list.length - 1]
+
+    if (last === undefined) {
+      return <Text dimColor>Esperando a que Claude escriba código…</Text>
+    }
 
     // The files touched this session, newest first, each once.
     const seen = new Set<string>()
@@ -180,16 +269,9 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
-    if (list.length === 0) {
-      return <Text dimColor>Esperando a que Claude escriba código…</Text>
-    }
-
-    if (e.surface === 'terminal' || e.surface === 'desktop') {
+    // The terminal types in a Client of its own, at its frame rate.
+    if (e.surface === 'terminal') {
       const { Client } = $.ui.resolve(e)
-      const queue =
-        replayed === undefined
-          ? waiting
-          : [replayed, ...waiting.filter(entry => entry.id !== replayed.id)]
       const props: TyperProps = {
         queue: queue.slice(0, HANDED),
         last,
@@ -205,22 +287,27 @@ export const register: Register = (on, options) => {
       )
     }
 
-    // A surface with no Client shows the change whole, not typed.
-    const entry = replayed ?? last!
-    const { name, folder } = splitPath(entry.path)
+    // Elsewhere the mod's own player types it.
+    const head = queue[0]
+    const now = await read($, stage)
+    if (head !== undefined) startPlayer($)
+    const elapsed =
+      head === undefined
+        ? Number.POSITIVE_INFINITY
+        : now.id === head.id
+          ? now.elapsed
+          : 0
 
     return (
       <Box flexDirection="column">
-        <Box flexDirection="row" gap={1}>
-          <Text bold color="claude">
-            {`✎ ${name}`}
-          </Text>
-          <Text dimColor>{entry.kind}</Text>
-          {entry.added > 0 && <Text color="success">{`+${entry.added}`}</Text>}
-          {entry.removed > 0 && <Text color="error">{`−${entry.removed}`}</Text>}
-        </Box>
-        {folder !== '' && <Text dimColor>{folder}</Text>}
-        <Code source={diffOf(entry)} path={entry.path} format="diff" />
+        {drawEntry(els, {
+          entry: head ?? last,
+          elapsed,
+          speed: settings.speed,
+          rows: e.props.scroll?.bodyRows ?? e.viewport?.rows ?? 30,
+          now: Date.now(),
+          waiting: Math.max(0, queue.length - 1),
+        })}
         {footer}
       </Box>
     )
