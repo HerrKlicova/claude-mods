@@ -27,8 +27,13 @@ const HANDED = 3
 const RECENT_FILES = 6
 // A tick of the mod's own player.
 const TICK_MS = 50
-const SOUND = 'sounds/tecleo.wav'
-const SOUND_GAIN = 0.5
+// One clip per volume: PowerShell's player on Windows takes no volume.
+const SOUNDS = {
+  bajo: 'sounds/tecleo-bajo.wav',
+  medio: 'sounds/tecleo-medio.wav',
+  alto: 'sounds/tecleo-alto.wav',
+} as const
+type Volume = keyof typeof SOUNDS
 // A loop on Windows stops by itself after this, whatever happens.
 const SOUND_MAX_MS = 10 * 60_000
 
@@ -89,6 +94,7 @@ type Settings = {
   autoOpen: boolean
   closeAfter: number
   sound: boolean
+  volume: Volume
   editor: string
 }
 
@@ -99,6 +105,7 @@ let settings: Settings = {
   autoOpen: true,
   closeAfter: 8,
   sound: false,
+  volume: 'bajo',
   editor: DEFAULT_EDITOR,
 }
 let idle: Timer | undefined
@@ -174,7 +181,7 @@ async function syncSound($: EngineInterface): Promise<void> {
     return
   }
   void $.audio
-    .play({ asset: SOUND }, { shouldLoop: true, signal: stop.signal, gain: SOUND_GAIN })
+    .play({ asset: SOUNDS[settings.volume] }, { shouldLoop: true, signal: stop.signal })
     .catch(() => undefined)
     .finally(done)
 }
@@ -184,7 +191,7 @@ async function playOnWindows(
   $: EngineInterface,
   signal: AbortSignal,
 ): Promise<void> {
-  const wav = assetPath($.plugin.root, SOUND)
+  const wav = assetPath($.plugin.root, SOUNDS[settings.volume])
   const until = Date.now() + SOUND_MAX_MS
   try {
     for await (const _ of $.process.spawn({ argv: windowsSoundArgv(wav) })) {
@@ -405,6 +412,10 @@ export const register: Register = (on, options) => {
     closeAfter:
       typeof options.cerrarTras === 'number' ? options.cerrarTras : 8,
     sound: options.sonido === true,
+    volume:
+      typeof options.volumen === 'string' && options.volumen in SOUNDS
+        ? (options.volumen as Volume)
+        : 'bajo',
     editor:
       typeof options.editor === 'string' && options.editor.trim() !== ''
         ? options.editor

@@ -1,6 +1,6 @@
 {
   "name": "tecleo",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Panel al lado del chat donde el código que Claude escribe o edita se va tecleando solo.",
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -32,6 +32,17 @@
       "title": "Sonido de tecleo",
       "description": "Suena un tecleo suave mientras se escribe el código",
       "default": false
+    },
+    "volumen": {
+      "type": "string",
+      "title": "Volumen del sonido",
+      "description": "bajo, medio o alto",
+      "options": [
+        "bajo",
+        "medio",
+        "alto"
+      ],
+      "default": "bajo"
     },
     "editor": {
       "type": "string",

@@ -535,7 +535,7 @@ test('with sonido on, a typing sound loops while an entry types', { options: { s
   on('tool.call', () => ({ result: EDIT_RESULT }))
   await $.tool.call({ tool: 'Edit', file_path: '/repo/src/auth.ts', old_string: 'a', new_string: 'b' })
   expect(played).toHaveLength(1)
-  expect(played[0]).toMatchObject({ clip: { asset: 'sounds/tecleo.wav' }, shouldLoop: true })
+  expect(played[0]).toMatchObject({ clip: { asset: 'sounds/tecleo-bajo.wav' }, shouldLoop: true })
 })
 
 test('the sound turns on and off from the pane and from /tecleo sonido', async ($, on) => {
@@ -575,4 +575,18 @@ test('on Windows the clip plays through PowerShell from the plugin folder', () =
   expect(argv[0]).toBe('powershell.exe')
   expect(argv[4]).toContain("SoundPlayer 'C:\\Users\\o''neil\\tecleo.wav'")
   expect(argv[4]).toContain('PlayLooping()')
+})
+
+test('the volume picks a louder clip', { options: { sonido: true, volumen: 'alto' } } as never, async ($, on) => {
+  const clock = mock.clock(on)
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  const played: { clip: unknown }[] = []
+  on('audio.play', (_, e) => {
+    played.push(e)
+
+    return new Promise(() => undefined) as never
+  })
+  on('tool.call', () => ({ result: EDIT_RESULT }))
+  await $.tool.call({ tool: 'Edit', file_path: '/repo/src/auth.ts', old_string: 'a', new_string: 'b' })
+  expect(played[0]).toMatchObject({ clip: { asset: 'sounds/tecleo-alto.wav' } })
 })

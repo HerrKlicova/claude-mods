@@ -20,7 +20,7 @@ Comandos: `/tecleo` abre o cierra el panel, y `/tecleo demo` reproduce una edici
 
 Por defecto teclea unas 70 letras por segundo; un cambio largo acelera para no tardar más de unos 6 segundos. En la terminal la animación va a 30 fotogramas por segundo; en la app de escritorio, VS Code y el móvil la mueve el propio mod, a unos 20.
 
-Opciones (en `/config` o al instalar): `velocidad` (lento, normal o rapido), `abrirSolo` (abrir el panel al editar), `cerrarTras` (segundos sin escribir antes de cerrarlo; 0 lo deja abierto), `sonido` (un tecleo suave mientras escribe; apagado por defecto; suena en macOS y Windows, no en Linux) y `editor` (el comando para abrir archivos, por defecto `code -g {archivo}:{linea}`; por ejemplo `cursor -g {archivo}:{linea}` o `subl {archivo}:{linea}`).
+Opciones (en `/config` o al instalar): `velocidad` (lento, normal o rapido), `abrirSolo` (abrir el panel al editar), `cerrarTras` (segundos sin escribir antes de cerrarlo; 0 lo deja abierto), `sonido` (un tecleo suave mientras escribe; apagado por defecto; suena en macOS y Windows, no en Linux), `volumen` (bajo, medio o alto; por defecto bajo) y `editor` (el comando para abrir archivos, por defecto `code -g {archivo}:{linea}`; por ejemplo `cursor -g {archivo}:{linea}` o `subl {archivo}:{linea}`).
 
 ### Actualizar
 
