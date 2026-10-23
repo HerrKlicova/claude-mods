@@ -1,0 +1,11 @@
+{
+  "name": "claude-mods",
+  "owner": { "name": "Eugenio" },
+  "plugins": [
+    {
+      "name": "tecleo",
+      "source": "./tecleo",
+      "description": "Panel al lado del chat donde el código que Claude escribe o edita se va tecleando solo."
+    }
+  ]
+}
