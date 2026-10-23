@@ -1,6 +1,6 @@
 {
   "name": "tecleo",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Panel al lado del chat donde el código que Claude escribe o edita se va tecleando solo.",
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -26,6 +26,18 @@
       "title": "Cerrar tras (segundos)",
       "description": "Segundos sin escribir antes de cerrar el panel; 0 lo deja abierto",
       "default": 8
+    },
+    "sonido": {
+      "type": "boolean",
+      "title": "Sonido de tecleo",
+      "description": "Suena un tecleo suave mientras se escribe el código",
+      "default": false
+    },
+    "editor": {
+      "type": "string",
+      "title": "Comando del editor",
+      "description": "Con qué abrir el archivo en la línea donde terminó; {archivo} y {linea} se sustituyen",
+      "default": "code -g {archivo}:{linea}"
     }
   },
   "author": {

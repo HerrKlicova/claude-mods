@@ -1,8 +1,9 @@
 import type { Entry, Hunk } from '../types'
 
-// Past these an entry is shown whole, not typed.
+// Past these an entry is big: only its first added lines are typed.
 const BIG_LINES = 400
 const BIG_CHARS = 20_000
+const BIG_TYPED = 60
 // What one entry keeps, so a queue of them fits a Client's props.
 const KEEP_CHARS = 24_000
 
@@ -119,21 +120,171 @@ export const entryOf = (
     } else if (line.startsWith('-')) removed += 1
   }
   if (added === 0 && removed === 0) return undefined
+  const isBig = added > BIG_LINES || addedChars > BIG_CHARS
+  if (!isBig) {
+    return { id, path, kind, hunks: trimmed(hunks), added, removed, isBig }
+  }
 
   return {
     id,
     path,
     kind,
-    hunks: trimmed(hunks),
+    hunks: trimmed(addedOnly(hunks, BIG_TYPED)),
     added,
     removed,
-    isBig: added > BIG_LINES || addedChars > BIG_CHARS,
+    isBig,
+    note: bigNote(Math.max(0, added - BIG_TYPED), removed),
   }
 }
 
-/** The pane's last path segment and its folder, for the header. */
+// A big change's added lines alone, the first `keep` of them, each hunk
+// starting where its first added line stands.
+const addedOnly = (hunks: Hunk[], keep: number): Hunk[] => {
+  const kept: Hunk[] = []
+  let left = keep
+  for (const hunk of hunks) {
+    if (left <= 0) break
+    let oldAt = hunk.oldStart
+    let newAt = hunk.newStart
+    let run: Hunk | undefined
+    for (const line of hunk.lines) {
+      if (line.startsWith('+')) {
+        if (left <= 0) break
+        if (run === undefined) {
+          run = { oldStart: oldAt, newStart: Math.max(1, newAt), lines: [] }
+          kept.push(run)
+        }
+        run.lines.push(line)
+        left -= 1
+        newAt += 1
+      } else {
+        // A line not typed ends the run: the next added one starts a hunk.
+        run = undefined
+        if (line.startsWith('-')) oldAt += 1
+        else {
+          oldAt += 1
+          newAt += 1
+        }
+      }
+    }
+  }
+
+  return kept
+}
+
+const plural = (n: number, one: string, many: string) =>
+  `${n} ${n === 1 ? one : many}`
+
+const bigNote = (more: number, removed: number): string => {
+  const parts: string[] = []
+  if (more > 0) parts.push(plural(more, 'línea añadida más', 'líneas añadidas más'))
+  if (removed > 0) parts.push(plural(removed, 'quitada', 'quitadas'))
+
+  return parts.length === 0 ? '' : `… ${parts.join(' y ')}, sin mostrar`
+}
+
+// What a shell command seems to change, as far as reading it tells.
+const WRITES = [
+  /(^|[^<>&|0-9])>>?\s*[^\s&|>]/,
+  /\b(sed|perl)\s+(-\w+\s+)*-i/,
+  /\btee\b/,
+  /(^|[\s;&|(])(mv|cp|rm|touch|mkdir|rmdir|ln|truncate|patch|install|unzip|tar)\s/,
+  /\bgit\s+(apply|checkout|restore|mv|rm|reset|stash|merge|rebase|pull|cherry-pick|am)\b/,
+  /\b(Set-Content|Add-Content|Out-File|New-Item|Remove-Item|Move-Item|Copy-Item|Rename-Item|Clear-Content)\b/i,
+]
+const NOT_FILES = /^(\/dev\/(null|stdout|stderr)|nul|\$null|&\d*)$/i
+
+const unquote = (word: string) => word.replace(/^["']|["']$/g, '')
+
+/** The files a command names as it writes them: redirects, `tee`, cmdlets. */
+const targetsOf = (command: string): string[] => {
+  const found: string[] = []
+  const take = (word: string | undefined) => {
+    if (word === undefined) return
+    const path = unquote(word)
+    if (path !== '' && !NOT_FILES.test(path) && !found.includes(path)) {
+      found.push(path)
+    }
+  }
+  for (const m of command.matchAll(/(?:^|[^<>&|0-9])>>?\s*("[^"]+"|'[^']+'|[^\s;&|<>()]+)/g)) {
+    take(m[1])
+  }
+  for (const m of command.matchAll(/\btee\s+(?:-a\s+)?("[^"]+"|'[^']+'|[^\s;&|<>()-][^\s;&|<>()]*)/g)) {
+    take(m[1])
+  }
+  for (const m of command.matchAll(
+    /\b(?:Set-Content|Add-Content|Out-File|New-Item|Clear-Content)\s+(?:-(?:Path|FilePath|LiteralPath)\s+)?("[^"]+"|'[^']+'|[^\s;&|<>()-][^\s;&|<>()]*)/gi,
+  )) {
+    take(m[1])
+  }
+  for (const m of command.matchAll(/\b(?:sed|perl)\s+(?:-\w+\s+)*-i\S*\s+(?:(?:-e\s+)?("[^"]*"|'[^']*')\s+)+("[^"]+"|'[^']+'|[^\s;&|<>()]+)/g)) {
+    take(m[2])
+  }
+
+  return found
+}
+
+/**
+ * The entry a Bash or PowerShell command makes when it looks like it changes
+ * files, or undefined when it reads as one that does not.
+ */
+export const terminalEntryOf = (
+  id: number,
+  command: string,
+): Entry | undefined => {
+  if (!WRITES.some(pattern => pattern.test(command))) return undefined
+  const targets = targetsOf(command)
+
+  return {
+    id,
+    path: targets[0] ?? '',
+    kind: 'terminal',
+    hunks: [],
+    added: 0,
+    removed: 0,
+    isBig: false,
+    command: command.length > 2000 ? `${command.slice(0, 2000)}…` : command,
+    targets,
+  }
+}
+
+/** The line typing ends on: the last added line, else the first changed. */
+export const endLineOf = (entry: Entry): number => {
+  let end = 0
+  for (const hunk of entry.hunks) {
+    let at = Math.max(1, hunk.newStart)
+    for (const line of hunk.lines) {
+      if (line.startsWith('+')) end = at
+      if (!line.startsWith('-')) at += 1
+    }
+  }
+  if (end > 0) return end
+
+  return Math.max(1, entry.hunks[0]?.newStart ?? 1)
+}
+
+/** What a run of entries came to: files touched and lines added and removed. */
+export const summaryOf = (list: readonly Entry[]) => {
+  const files = new Set<string>()
+  let added = 0
+  let removed = 0
+  for (const entry of list) {
+    for (const path of entry.kind === 'terminal' ? entry.targets ?? [] : [entry.path]) {
+      if (path !== '') files.add(path)
+    }
+    added += entry.added
+    removed += entry.removed
+  }
+
+  return { entries: list.length, files: files.size, added, removed }
+}
+
+/**
+ * The pane's last path segment and its folder, for the header: cut at the
+ * last `/` or `\`, so Windows paths split too.
+ */
 export const splitPath = (path: string): { name: string; folder: string } => {
-  const cut = path.lastIndexOf('/')
+  const cut = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
 
   return cut < 0
     ? { name: path, folder: '' }

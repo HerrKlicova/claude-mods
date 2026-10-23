@@ -7,8 +7,14 @@ import type {
 } from 'claude-code'
 
 import type { Entry, Speed, TyperPost, TyperProps } from '../types'
-import { entryOf, splitPath } from './entries'
-import { MAX_RUSH, drawEntry, durationOf } from './view'
+import {
+  endLineOf,
+  entryOf,
+  splitPath,
+  summaryOf,
+  terminalEntryOf,
+} from './entries'
+import { MAX_RUSH, drawEntry, durationOf, remainingMs } from './view'
 
 const PANE = 'tecleo'
 const TITLE = 'Tecleo'
@@ -20,17 +26,30 @@ const HANDED = 3
 const RECENT_FILES = 6
 // A tick of the mod's own player.
 const TICK_MS = 50
+const SOUND = 'sounds/tecleo.wav'
+const SOUND_GAIN = 0.5
 
 const entries = atom({ plugin: 'tecleo', key: 'entries' } as const, [], {
   shape: 'entries-1',
 })
 const playhead = atom({ plugin: 'tecleo', key: 'playhead' } as const, 0)
-const replay = atom({ plugin: 'tecleo', key: 'replay' } as const, 0)
+const again = atom({ plugin: 'tecleo', key: 'again' } as const, [])
 // Where the mod's own player stands, on surfaces that draw no Client.
 const stage = atom({ plugin: 'tecleo', key: 'stage' } as const, {
   id: 0,
   elapsed: 0,
 })
+const paused = atom({ plugin: 'tecleo', key: 'paused' } as const, false)
+const plays = atom({ plugin: 'tecleo', key: 'plays' } as const, 0)
+const lastPlayed = atom({ plugin: 'tecleo', key: 'lastPlayed' } as const, 0)
+const picked = atom({ plugin: 'tecleo', key: 'speed' } as const, null)
+const skipped = atom({ plugin: 'tecleo', key: 'skipped' } as const, [])
+const runFrom = atom({ plugin: 'tecleo', key: 'runFrom' } as const, 0)
+const summary = atom({ plugin: 'tecleo', key: 'summary' } as const, null)
+const showHistory = atom(
+  { plugin: 'tecleo', key: 'showHistory' } as const,
+  false,
+)
 
 // What `/tecleo demo` plays.
 const DEMO = {
@@ -54,48 +73,182 @@ const DEMO = {
 }
 
 const SPEEDS: readonly Speed[] = ['lento', 'normal', 'rapido']
+const SPEED_WORDS: Record<string, Speed> = {
+  lento: 'lento',
+  normal: 'normal',
+  rapido: 'rapido',
+  rápido: 'rapido',
+}
 
-type Settings = { speed: Speed; autoOpen: boolean; closeAfter: number }
+type Settings = {
+  speed: Speed
+  autoOpen: boolean
+  closeAfter: number
+  sound: boolean
+  editor: string
+}
 
-let settings: Settings = { speed: 'normal', autoOpen: true, closeAfter: 8 }
+const DEFAULT_EDITOR = 'code -g {archivo}:{linea}'
+
+let settings: Settings = {
+  speed: 'normal',
+  autoOpen: true,
+  closeAfter: 8,
+  sound: false,
+  editor: DEFAULT_EDITOR,
+}
 let idle: Timer | undefined
 let player: Timer | undefined
+let sound: AbortController | undefined
 
 function pendingOf(list: readonly Entry[], head: number): Entry[] {
   return list.filter(entry => entry.id > head)
 }
 
-// What plays next: an entry asked for again first, then those waiting.
+async function speedOf($: EngineInterface): Promise<Speed> {
+  return (await read($, picked)) ?? settings.speed
+}
+
+// What plays next: entries asked for again first, then those waiting.
 async function queueOf($: EngineInterface): Promise<Entry[]> {
   const list = await read($, entries)
   const waiting = pendingOf(list, await read($, playhead))
-  const again = await read($, replay)
-  const replayed = list.find(entry => entry.id === again)
+  const asked = (await read($, again))
+    .map(id => list.find(entry => entry.id === id))
+    .filter((entry): entry is Entry => entry !== undefined)
 
-  return replayed === undefined
-    ? waiting
-    : [replayed, ...waiting.filter(entry => entry.id !== replayed.id)]
+  return [...asked, ...waiting.filter(entry => !asked.includes(entry))]
 }
 
-// Closes the pane once Claude has stopped writing for a while; each new
-// write or played entry pushes the close back.
-function scheduleClose($: EngineInterface, waiting: number): void {
+// Closes the pane once Claude has stopped writing for a while and what waits
+// has had time to play; each new write or played entry pushes the close back.
+async function scheduleClose($: EngineInterface): Promise<void> {
   idle?.cancel()
   idle = undefined
-  if (settings.closeAfter <= 0) return
+  if (settings.closeAfter <= 0 || (await read($, paused))) return
   const delay =
-    settings.closeAfter * 1000 + Math.min(waiting, MAX_PENDING) * 6500
+    settings.closeAfter * 1000 +
+    remainingMs(await queueOf($), await speedOf($))
   idle = $.clock.after(delay, () => {
     idle = undefined
     void $.ui.close({ id: PANE }).catch(() => undefined)
   })
 }
 
-// An entry has been played: move on, and push the close back.
+// The typing sound loops while an entry is typed, if it is turned on.
+async function syncSound($: EngineInterface): Promise<void> {
+  const head = (await queueOf($))[0]
+  const isTyping =
+    settings.sound &&
+    head !== undefined &&
+    head.kind !== 'terminal' &&
+    !(await read($, paused))
+  if (!isTyping) {
+    sound?.abort()
+    sound = undefined
+
+    return
+  }
+  if (sound !== undefined) return
+  const stop = new AbortController()
+  sound = stop
+  void $.audio
+    .play({ asset: SOUND }, { shouldLoop: true, signal: stop.signal, gain: SOUND_GAIN })
+    .catch(() => undefined)
+    .finally(() => {
+      if (sound === stop) sound = undefined
+    })
+}
+
+// An entry has been played: move on, and once the queue empties say what
+// the run came to.
 async function finish($: EngineInterface, done: number): Promise<void> {
-  if ((await read($, replay)) === done) await update($, replay, () => 0)
-  else await update($, playhead, now => Math.max(now, done))
-  scheduleClose($, (await queueOf($)).length)
+  const before = await queueOf($)
+  if (before[0]?.id !== done) return
+  const asked = await read($, again)
+  if (asked.includes(done)) {
+    await update($, again, ids => ids.filter(id => id !== done))
+  } else {
+    await update($, playhead, now => Math.max(now, done))
+  }
+  await update($, plays, n => n + 1)
+  await update($, lastPlayed, () => done)
+  if ((await queueOf($)).length === 0) {
+    const from = await read($, runFrom)
+    if (from > 0) {
+      const run = (await read($, entries)).filter(entry => entry.id >= from)
+      const total = summaryOf(run)
+      await update($, summary, () => (total.entries > 1 ? total : null))
+      await update($, runFrom, () => 0)
+    }
+  }
+  await scheduleClose($)
+  await syncSound($)
+}
+
+async function skip($: EngineInterface): Promise<boolean> {
+  const head = (await queueOf($))[0]
+  if (head === undefined) return false
+  await update($, stage, () => ({ id: 0, elapsed: 0 }))
+  await finish($, head.id)
+
+  return true
+}
+
+async function setPaused($: EngineInterface, value: boolean): Promise<void> {
+  await update($, paused, () => value)
+  await scheduleClose($)
+  await syncSound($)
+}
+
+// Plays entries again, before whatever waits.
+async function playAgain($: EngineInterface, ids: number[]): Promise<void> {
+  await update($, again, now => [...ids, ...now.filter(id => !ids.includes(id))])
+  await update($, summary, () => null)
+  await scheduleClose($)
+  await syncSound($)
+}
+
+async function setSpeed($: EngineInterface, speed: Speed): Promise<void> {
+  await update($, picked, () => speed)
+  await scheduleClose($)
+}
+
+const nextSpeed = (speed: Speed): Speed =>
+  SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length] ?? 'normal'
+
+// The editor's command for a file and line, `{archivo}` and `{linea}` filled
+// in; on Windows through `cmd /c`, which finds `code.cmd` and the like.
+function editorArgv(path: string, line: number): string[] {
+  const words = settings.editor.trim().split(/\s+/).filter(word => word !== '')
+  const filled = (words.length > 0 ? words : DEFAULT_EDITOR.split(' ')).map(
+    word =>
+      word.replaceAll('{archivo}', path).replaceAll('{linea}', String(line)),
+  )
+  const isWindows = /^[A-Za-z]:[\\/]/.test(path) || path.startsWith('\\\\')
+
+  return isWindows ? ['cmd', '/c', ...filled] : filled
+}
+
+// Opens the entry's file in the editor, on the line its typing ends on.
+async function openInEditor(
+  $: EngineInterface,
+  entry: Entry | undefined,
+): Promise<string> {
+  const path = entry?.kind === 'terminal' ? entry.targets?.[0] : entry?.path
+  if (entry === undefined || path === undefined || path === '') {
+    return 'No hay ningún archivo que abrir.'
+  }
+  const line = entry.kind === 'terminal' ? 1 : endLineOf(entry)
+  const where = `${splitPath(path).name}:${line}`
+  try {
+    const ran = await $.process.run(editorArgv(path, line), { timeoutMs: 15_000 })
+    if (ran.exitCode === 0) return `Abierto ${where} en el editor.`
+
+    return `No se pudo abrir ${where}: ${ran.stderr.trim() || `código ${ran.exitCode}`}`
+  } catch (error) {
+    return `No se pudo abrir ${where}: ${error instanceof Error ? error.message : String(error)}`
+  }
 }
 
 // The mod's own player, for surfaces that draw no Client: a few frames a
@@ -103,7 +256,7 @@ async function finish($: EngineInterface, done: number): Promise<void> {
 async function tick($: EngineInterface): Promise<void> {
   const queue = await queueOf($)
   const head = queue[0]
-  if (head === undefined) {
+  if (head === undefined || (await read($, paused))) {
     player?.cancel()
     player = undefined
 
@@ -117,7 +270,7 @@ async function tick($: EngineInterface): Promise<void> {
   }
   const rush = Math.min(MAX_RUSH, Math.max(1, queue.length))
   const elapsed = now.elapsed + TICK_MS * rush
-  if (elapsed >= durationOf(head, settings.speed)) {
+  if (elapsed >= durationOf(head, await speedOf($))) {
     await update($, stage, () => ({ id: 0, elapsed: 0 }))
     await finish($, head.id)
 
@@ -135,27 +288,39 @@ function startPlayer($: EngineInterface): void {
 
 async function record(
   $: EngineInterface,
-  tool: string,
-  input: Record<string, unknown>,
-  result: unknown,
+  make: (id: number) => Entry | undefined,
 ): Promise<void> {
   const list = await read($, entries)
-  const id = (list[list.length - 1]?.id ?? 0) + 1
-  const entry = entryOf(id, tool, input, result)
+  const entry = make((list[list.length - 1]?.id ?? 0) + 1)
   if (entry === undefined) return
+  const wasEmpty = (await queueOf($)).length === 0
   const next = [...list, entry].slice(-KEEP)
+  const first = next[0]?.id ?? entry.id
   await update($, entries, () => next)
-  // A backlog plays its newest few, not everything late.
+  if (wasEmpty) {
+    await update($, runFrom, () => entry.id)
+    await update($, summary, () => null)
+  }
+  // A backlog plays its newest few, not everything late; what it passes over
+  // is kept so the pane can say so.
   const head = await read($, playhead)
   const waiting = pendingOf(next, head)
-  if (waiting.length > MAX_PENDING) {
-    const skipTo = waiting[waiting.length - MAX_PENDING - 1]!.id
-    await update($, playhead, now => Math.max(now, skipTo))
+  const passed =
+    waiting.length > MAX_PENDING
+      ? waiting.slice(0, waiting.length - MAX_PENDING).map(item => item.id)
+      : []
+  if (passed.length > 0) {
+    await update($, playhead, now => Math.max(now, passed[passed.length - 1]!))
   }
+  await update($, skipped, ids =>
+    [...ids, ...passed].filter(id => id >= first),
+  )
+  await update($, again, ids => ids.filter(id => id >= first))
   if (settings.autoOpen) {
     void $.ui.open({ id: PANE, title: TITLE }).catch(() => undefined)
   }
-  scheduleClose($, Math.min(waiting.length, MAX_PENDING))
+  await scheduleClose($)
+  await syncSound($)
 }
 
 async function afterTool<R extends ToolCallResult>(
@@ -165,7 +330,8 @@ async function afterTool<R extends ToolCallResult>(
 ): Promise<R> {
   try {
     if (ran.deny === undefined && ran.isError !== true) {
-      await record($, e.tool, e as unknown as Record<string, unknown>, ran.result)
+      const input = e as unknown as Record<string, unknown>
+      await record($, id => entryOf(id, e.tool, input, ran.result))
     }
   } catch {
     // Nothing to show for this call.
@@ -173,6 +339,27 @@ async function afterTool<R extends ToolCallResult>(
 
   return ran
 }
+
+// A command run in the terminal: the pane says when it seems to change files.
+async function afterShell<R extends ToolCallResult>(
+  $: EngineInterface,
+  e: { readonly command?: unknown },
+  ran: R,
+): Promise<R> {
+  try {
+    if (ran.deny === undefined && typeof e.command === 'string') {
+      const command = e.command
+      await record($, id => terminalEntryOf(id, command))
+    }
+  } catch {
+    // Nothing to show for this call.
+  }
+
+  return ran
+}
+
+const HELP =
+  'Uso: /tecleo [demo | pausa | seguir | saltar | lento | normal | rapido | historial | editor]'
 
 export const register: Register = (on, options) => {
   settings = {
@@ -182,25 +369,70 @@ export const register: Register = (on, options) => {
     autoOpen: options.abrirSolo !== false,
     closeAfter:
       typeof options.cerrarTras === 'number' ? options.cerrarTras : 8,
+    sound: options.sonido === true,
+    editor:
+      typeof options.editor === 'string' && options.editor.trim() !== ''
+        ? options.editor
+        : DEFAULT_EDITOR,
   }
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'tecleo',
       description:
-        'Abre o cierra el panel donde se teclea el código que escribe Claude; "demo" lo prueba',
-      argumentHint: '[demo]',
+        'Abre o cierra el panel donde se teclea el código que escribe Claude; también pausa, salta, cambia la velocidad o lo prueba ("demo")',
+      argumentHint: '[demo|pausa|seguir|saltar|lento|normal|rapido|historial|editor]',
     })
 
     return next(e)
   })
 
   on('command.run', { command: 'tecleo' }, async ($, e) => {
-    if (e.args.trim() === 'demo') {
-      await record($, 'Edit', {}, DEMO)
-      await $.ui.open({ id: PANE, title: TITLE })
+    const word = e.args.trim().toLowerCase()
+    const speed = SPEED_WORDS[word]
+    if (speed !== undefined) {
+      await setSpeed($, speed)
 
-      return { text: 'Demo de tecleo en marcha.' }
+      return { text: `Tecleo en velocidad ${speed}.` }
+    }
+    switch (word) {
+      case 'demo':
+        await record($, id => entryOf(id, 'Edit', {}, DEMO))
+        await $.ui.open({ id: PANE, title: TITLE })
+
+        return { text: 'Demo de tecleo en marcha.' }
+      case 'pausa': {
+        const isPaused = !(await read($, paused))
+        await setPaused($, isPaused)
+
+        return { text: isPaused ? 'Tecleo en pausa.' : 'Tecleo reanudado.' }
+      }
+      case 'seguir':
+        await setPaused($, false)
+
+        return { text: 'Tecleo reanudado.' }
+      case 'saltar':
+        return {
+          text: (await skip($)) ? 'Entrada saltada.' : 'No hay nada que saltar.',
+        }
+      case 'historial':
+        await update($, showHistory, () => true)
+        await $.ui.open({ id: PANE, title: TITLE })
+
+        return { text: 'Historial de tecleo abierto.' }
+      case 'editor': {
+        const queue = await queueOf($)
+        const list = await read($, entries)
+        const played = await read($, lastPlayed)
+        const last =
+          list.find(entry => entry.id === played) ?? list[list.length - 1]
+
+        return { text: await openInEditor($, queue[0] ?? last) }
+      }
+      case '':
+        break
+      default:
+        return { text: HELP }
     }
     const panes = await $.ui.panes()
     if (panes.some(pane => pane.id === PANE)) {
@@ -225,6 +457,10 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: 'NotebookEdit' }, async ($, e, next) =>
     afterTool($, e, await next(e)),
   ).catch(($, e, next) => next(e))
+  // PowerShell is the shell tool on Windows; the types know only Bash's.
+  on('tool.call', { tool: /^(Bash|PowerShell)$/ }, async ($, e, next) =>
+    afterShell($, e as { readonly command?: unknown }, await next(e)),
+  ).catch(($, e, next) => next(e))
 
   on('ui.message', async ($, e, next) => {
     const data = e.data as Partial<TyperPost> | null
@@ -239,33 +475,148 @@ export const register: Register = (on, options) => {
     const { Box, Text, Button } = els
     const list = await read($, entries)
     const queue = await queueOf($)
-    const last = list[list.length - 1]
+    // Once nothing waits, the entry played last stays on screen.
+    const played = await read($, lastPlayed)
+    const last =
+      list.find(entry => entry.id === played) ?? list[list.length - 1]
 
     if (last === undefined) {
       return <Text dimColor>Esperando a que Claude escriba código…</Text>
     }
 
+    const isPaused = await read($, paused)
+    const speed = await speedOf($)
+    const head = queue[0]
+    const shown = head ?? last
+    const passed = (await read($, skipped)).filter(id =>
+      list.some(entry => entry.id === id),
+    )
+    const total = await read($, summary)
+    const isHistoryOpen = await read($, showHistory)
+
+    const controls = (
+      <Box flexDirection="row" flexWrap="wrap" columnGap={1} marginTop={1}>
+        <Button
+          key="pausa"
+          hotkey="p"
+          onPress={() => setPaused($, !isPaused)}
+        >
+          {isPaused ? '▶ Seguir' : '⏸ Pausa'}
+        </Button>
+        {head !== undefined && (
+          <Button key="saltar" hotkey="s" onPress={() => skip($)}>
+            ⏭ Saltar
+          </Button>
+        )}
+        <Button
+          key="velocidad"
+          hotkey="v"
+          onPress={() => setSpeed($, nextSpeed(speed))}
+        >
+          {`Velocidad: ${speed}`}
+        </Button>
+        <Button
+          key="editor"
+          hotkey="e"
+          onPress={async () => {
+            $.ui.toast(await openInEditor($, shown))
+          }}
+        >
+          Abrir en editor
+        </Button>
+        <Button
+          key="historial"
+          hotkey="h"
+          onPress={() => update($, showHistory, open => !open)}
+        >
+          {`${isHistoryOpen ? 'Ocultar historial' : 'Historial'} (${list.length})`}
+        </Button>
+      </Box>
+    )
+
+    const notices = (
+      <Box flexDirection="column">
+        {passed.length > 0 && (
+          <Box flexDirection="row" columnGap={1}>
+            <Text color="warning">
+              {passed.length === 1
+                ? '1 cambio saltado'
+                : `${passed.length} cambios saltados`}
+            </Text>
+            <Button
+              key="ver-saltados"
+              onPress={async () => {
+                await update($, skipped, () => [])
+                await playAgain($, passed)
+              }}
+            >
+              Ver
+            </Button>
+          </Box>
+        )}
+        {head === undefined && total !== null && (
+          <Text color="success">
+            {`✓ ${total.files === 1 ? '1 archivo' : `${total.files} archivos`}, +${total.added} −${total.removed}`}
+          </Text>
+        )}
+      </Box>
+    )
+
     // The files touched this session, newest first, each once.
     const seen = new Set<string>()
     const recent: Entry[] = []
     for (const entry of [...list].reverse()) {
-      if (seen.has(entry.path)) continue
+      if (entry.kind === 'terminal' || seen.has(entry.path)) continue
       seen.add(entry.path)
       recent.push(entry)
     }
     const files = recent.slice(0, RECENT_FILES)
-    const footer = files.length > 1 && (
-      <Box flexDirection="row" flexWrap="wrap" columnGap={1} marginTop={1}>
+    const touched = files.length > 0 && (
+      <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
         <Text dimColor>Tocados:</Text>
         {files.map(entry => (
           <Button
             key={`f${entry.id}`}
             plain
-            onPress={() => update($, replay, () => entry.id)}
+            onPress={() => playAgain($, [entry.id])}
           >
             {splitPath(entry.path).name}
           </Button>
         ))}
+      </Box>
+    )
+
+    // Every entry kept, newest first: any of them can be played again.
+    const history = isHistoryOpen && (
+      <Box flexDirection="column">
+        <Text dimColor>Historial:</Text>
+        {[...list].reverse().map(entry => {
+          const name =
+            entry.kind === 'terminal'
+              ? `⌨ ${(entry.targets ?? []).map(path => splitPath(path).name).join(', ') || 'terminal'}`
+              : splitPath(entry.path).name
+          const counts =
+            entry.kind === 'terminal' ? '' : ` +${entry.added} −${entry.removed}`
+
+          return (
+            <Button
+              key={`h${entry.id}`}
+              plain
+              onPress={() => playAgain($, [entry.id])}
+            >
+              {`${name} · ${entry.kind}${counts}${passed.includes(entry.id) ? ' · saltado' : ''}`}
+            </Button>
+          )
+        })}
+      </Box>
+    )
+
+    const footer = (
+      <Box flexDirection="column">
+        {notices}
+        {controls}
+        {touched}
+        {history}
       </Box>
     )
 
@@ -275,8 +626,10 @@ export const register: Register = (on, options) => {
       const props: TyperProps = {
         queue: queue.slice(0, HANDED),
         last,
-        speed: settings.speed,
+        speed,
         pending: queue.length,
+        paused: isPaused,
+        plays: await read($, plays),
       }
 
       return (
@@ -288,9 +641,8 @@ export const register: Register = (on, options) => {
     }
 
     // Elsewhere the mod's own player types it.
-    const head = queue[0]
     const now = await read($, stage)
-    if (head !== undefined) startPlayer($)
+    if (head !== undefined && !isPaused) startPlayer($)
     const elapsed =
       head === undefined
         ? Number.POSITIVE_INFINITY
@@ -301,12 +653,13 @@ export const register: Register = (on, options) => {
     return (
       <Box flexDirection="column">
         {drawEntry(els, {
-          entry: head ?? last,
+          entry: shown,
           elapsed,
-          speed: settings.speed,
+          speed,
           rows: e.props.scroll?.bodyRows ?? e.viewport?.rows ?? 30,
           now: Date.now(),
           waiting: Math.max(0, queue.length - 1),
+          paused: isPaused && head !== undefined,
         })}
         {footer}
       </Box>

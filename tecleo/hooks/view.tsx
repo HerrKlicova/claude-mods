@@ -1,10 +1,12 @@
 import type { ClientElements } from 'claude-code'
 
 import type { Entry, Speed } from '../types'
+import { splitPath } from './entries'
 
 const FADE_MS = 260
 const HOLD_MS = 450
-const BIG_HOLD_MS = 700
+// A command run in the terminal: nothing to type, a moment to read it.
+const TERMINAL_HOLD_MS = 1800
 const BLINK_MS = 500
 // Characters a second at the least, and how long an entry may take at most.
 const SPEED: Record<Speed, { cps: number; budgetMs: number }> = {
@@ -78,7 +80,9 @@ const diffSource = (rows: readonly Shown[]): string => {
 
 /** How long each part of playing an entry takes, in its own milliseconds. */
 export const timingOf = (entry: Entry, speed: Speed): Timing => {
-  if (entry.isBig) return { fade: 0, type: 0, hold: BIG_HOLD_MS, cps: 1 }
+  if (entry.kind === 'terminal') {
+    return { fade: 0, type: 0, hold: TERMINAL_HOLD_MS, cps: 1 }
+  }
   const { cps: least, budgetMs } = SPEED[speed] ?? SPEED.normal
   const chars = rowsOf(entry)
     .filter(row => row.kind === '+')
@@ -99,13 +103,18 @@ export const durationOf = (entry: Entry, speed: Speed): number => {
   return timing.fade + timing.type + timing.hold
 }
 
-const splitPath = (path: string) => {
-  const cut = path.lastIndexOf('/')
-
-  return cut < 0
-    ? { name: path, folder: '' }
-    : { name: path.slice(cut + 1), folder: path.slice(0, cut + 1) }
-}
+/**
+ * How long a queue takes to play from its start, as the players speed up
+ * while entries wait: what the pane waits for before it may close.
+ */
+export const remainingMs = (queue: readonly Entry[], speed: Speed): number =>
+  queue.reduce(
+    (sum, entry, index) =>
+      sum +
+      durationOf(entry, speed) /
+        Math.min(MAX_RUSH, Math.max(1, queue.length - index)),
+    0,
+  )
 
 export type DrawArgs = {
   entry: Entry
@@ -118,20 +127,24 @@ export type DrawArgs = {
   now: number
   /** Entries waiting after this one. */
   waiting: number
+  /** Typing stands still. */
+  paused?: boolean
 }
 
 /** One entry as far as it has been typed: its header and its code. */
 export const drawEntry = (
   { Box, Text, Code }: Drawing,
-  { entry, elapsed, speed, rows: room, now, waiting }: DrawArgs,
+  { entry, elapsed, speed, rows: room, now, waiting, paused = false }: DrawArgs,
 ) => {
+  if (entry.kind === 'terminal') {
+    return drawTerminal({ Box, Text, Code }, entry, waiting, paused)
+  }
   const rows = rowsOf(entry)
   const timing = timingOf(entry, speed)
-  const typed =
-    entry.isBig || !Number.isFinite(elapsed)
-      ? Number.POSITIVE_INFINITY
-      : Math.floor(((elapsed - timing.fade) * timing.cps) / 1000)
-  const isTyping = Number.isFinite(typed) && !entry.isBig
+  const typed = !Number.isFinite(elapsed)
+    ? Number.POSITIVE_INFINITY
+    : Math.floor(((elapsed - timing.fade) * timing.cps) / 1000)
+  const isTyping = Number.isFinite(typed)
   const isBlinkOn = Math.floor(now / BLINK_MS) % 2 === 0
 
   // Walk the rows, typing the added ones in order.
@@ -173,7 +186,8 @@ export const drawEntry = (
         {entry.added > 0 && <Text color="success">{`+${entry.added}`}</Text>}
         {entry.removed > 0 && <Text color="error">{`−${entry.removed}`}</Text>}
         {waiting > 0 && <Text dimColor>{`· ${waiting} en cola`}</Text>}
-        {entry.isBig && <Text dimColor>· grande, sin animar</Text>}
+        {entry.isBig && <Text dimColor>· grande: solo lo añadido</Text>}
+        {paused && <Text color="warning">· en pausa</Text>}
       </Box>
       {folder !== '' && (
         <Text dimColor wrap="truncate-start">
@@ -195,6 +209,39 @@ export const drawEntry = (
           wrap="truncate-end"
         />
       )}
+      {entry.note !== undefined && entry.note !== '' && (
+        <Text dimColor>{entry.note}</Text>
+      )}
+    </Box>
+  )
+}
+
+// A command that changed files from the terminal: what it named, and itself.
+const drawTerminal = (
+  { Box, Text, Code }: Drawing,
+  entry: Entry,
+  waiting: number,
+  paused: boolean,
+) => {
+  const targets = entry.targets ?? []
+
+  return (
+    <Box flexDirection="column">
+      <Box flexDirection="row" gap={1}>
+        <Text bold color="warning">
+          ⌨ archivo cambiado por terminal
+        </Text>
+        {waiting > 0 && <Text dimColor>{`· ${waiting} en cola`}</Text>}
+        {paused && <Text color="warning">· en pausa</Text>}
+      </Box>
+      {targets.length > 0 ? (
+        <Text wrap="truncate-end">
+          {targets.map(path => splitPath(path).name).join(', ')}
+        </Text>
+      ) : (
+        <Text dimColor>No se sabe qué archivos; el comando:</Text>
+      )}
+      <Code source={entry.command ?? ''} language="bash" wrap="truncate-end" />
     </Box>
   )
 }
