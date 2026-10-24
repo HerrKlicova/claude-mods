@@ -9,7 +9,7 @@ Cada vez que Claude escribe o edita un archivo, se abre un panel al lado del cha
 Controles del panel (también con su tecla cuando el panel tiene el foco):
 
 - **Pausa / Seguir** (`p`), **Saltar** la entrada actual (`s`), **Velocidad** (`v`, pasa por lento, normal y rápido sin reiniciar).
-- **Sonido** (`o`): enciende o apaga el tecleo sonoro. Suena en macOS y en Windows (en Windows lo reproduce PowerShell); en Linux no.
+- **Sonido** (`o`): enciende o apaga el tecleo sonoro. Suena en macOS y en Windows (en Windows lo reproduce PowerShell, y solo mientras la ventana de Claude está delante); en Linux no.
 - **Abrir en editor** (`e`): abre el archivo en la línea donde terminó de teclear.
 - **Historial** (`h`): las 30 últimas entradas; pulsa cualquiera para volver a verla. Debajo, «Tocados:» lista los archivos tocados, aunque sea uno solo.
 - Si llegan más de 5 cambios de golpe, los antiguos se saltan y el panel avisa con «N cambios saltados» y un botón **Ver** para reproducirlos.

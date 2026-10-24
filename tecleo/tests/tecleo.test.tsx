@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import { splitPath } from '../hooks/entries'
-import { assetPath, pidOf, windowsSoundArgv } from '../hooks/sound'
+import { assetPath, encodeCommand, pidOf, windowsSoundArgv, windowsSoundScript } from '../hooks/sound'
 
 const PANE = {
   plugin: 'tecleo',
@@ -611,16 +611,29 @@ test('the sound turns on and off from the pane and from /tecleo sonido', async (
   await ui.unmount()
 })
 
-test('on Windows the clip plays through PowerShell from the plugin folder', () => {
+test('on Windows the clip plays through PowerShell, only while Claude is in front', () => {
   const wav = assetPath('C:\\Users\\eu\\.claude\\plugins\\tecleo\\', 'sounds/tecleo.wav')
   expect(wav).toBe('C:\\Users\\eu\\.claude\\plugins\\tecleo\\sounds\\tecleo.wav')
   expect(assetPath('/home/eu/tecleo', 'sounds/tecleo.wav')).toBe('/home/eu/tecleo/sounds/tecleo.wav')
-  const argv = windowsSoundArgv("C:\\Users\\o'neil\\tecleo.wav")
+  const script = windowsSoundScript("C:\\Users\\o'neil\\tecleo.wav")
+  expect(script).toContain("SoundPlayer 'C:\\Users\\o''neil\\tecleo.wav'")
+  expect(script).toContain('GetForegroundWindow')
+  expect(script).toContain('$p.Stop(); $on = $false')
+  expect(script).toContain('AddSeconds(60)')
+  expect(script).toContain('Get-Process -Id $pp')
+
+  const argv = windowsSoundArgv('C:\\a.wav')
   expect(argv[0]).toBe('powershell.exe')
-  expect(argv[4]).toContain("SoundPlayer 'C:\\Users\\o''neil\\tecleo.wav'")
-  expect(argv[4]).toContain('PlayLooping()')
-  expect(argv[4]).toContain('AddSeconds(15)')
-  expect(argv[4]).toContain('Get-Process -Id $pp')
+  expect(argv).toContain('-EncodedCommand')
+  // What PowerShell decodes is the script, UTF-16LE.
+  const bytes = atob(argv[argv.length - 1]!)
+  let decoded = ''
+  for (let i = 0; i < bytes.length; i += 2) {
+    decoded += String.fromCharCode(bytes.charCodeAt(i) | (bytes.charCodeAt(i + 1) << 8))
+  }
+  expect(decoded).toBe(windowsSoundScript('C:\\a.wav'))
+  expect(encodeCommand('ñ')).toBe('8QA=')
+
   expect(pidOf('pid:4242\r\n.')).toBe(4242)
   expect(pidOf('.')).toBeUndefined()
 })
