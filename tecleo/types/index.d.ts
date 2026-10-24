@@ -36,8 +36,11 @@ export type TyperProps = {
   plays: number
 }
 
-/** What the `Client` posts back when it has played an entry. */
-export type TyperPost = { done: number }
+/**
+ * What the `Client` posts back: an entry played, or, every few frames, the
+ * entry it is typing, which keeps the typing sound going.
+ */
+export type TyperPost = { done: number; typing?: undefined } | { typing: number; done?: undefined }
 
 /** What the pane says once the queue has emptied. */
 export type Summary = {

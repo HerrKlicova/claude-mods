@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import { splitPath } from '../hooks/entries'
-import { assetPath, windowsSoundArgv } from '../hooks/sound'
+import { assetPath, pidOf, windowsSoundArgv } from '../hooks/sound'
 
 const PANE = {
   plugin: 'tecleo',
@@ -523,19 +523,60 @@ test('no typing sound unless it is turned on', async ($, on) => {
   expect(played).toEqual([])
 })
 
-test('with sonido on, a typing sound loops while an entry types', { options: { sonido: true } } as never, async ($, on) => {
+test('with sonido on, a typing sound loops while an entry types, and stops', { options: { sonido: true } } as never, async ($, on) => {
   const clock = mock.clock(on)
   on('ui.open', () => ({ value: { isPlaced: true } }))
   const played: { clip: unknown; shouldLoop: boolean }[] = []
-  on('audio.play', (_, e) => {
+  let stopped = 0
+  on('audio.play', (_, e, next) => {
     played.push(e)
 
-    return new Promise(() => undefined) as never
+    return new Promise(resolve => {
+      next.signal?.addEventListener('abort', () => {
+        stopped += 1
+        resolve({ value: undefined })
+      })
+    }) as never
   })
   on('tool.call', () => ({ result: EDIT_RESULT }))
   await $.tool.call({ tool: 'Edit', file_path: '/repo/src/auth.ts', old_string: 'a', new_string: 'b' })
+  // Nothing typed yet, nothing heard.
+  expect(played).toHaveLength(0)
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  for (let i = 0; i < 3; i++) await clock.advance(80)
   expect(played).toHaveLength(1)
   expect(played[0]).toMatchObject({ clip: { asset: 'sounds/tecleo-bajo.wav' }, shouldLoop: true })
+  expect(stopped).toBe(0)
+
+  // Done typing: silence.
+  for (let i = 0; i < 80; i++) await clock.advance(80)
+  expect(stopped).toBe(1)
+  expect(played).toHaveLength(1)
+  await ui.unmount()
+})
+
+test('the sound stops when typing stalls, the pane closed mid-entry', { options: { sonido: true } } as never, async ($, on) => {
+  const clock = mock.clock(on)
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  let stopped = 0
+  on('audio.play', (_, e, next) =>
+    new Promise(resolve => {
+      next.signal?.addEventListener('abort', () => {
+        stopped += 1
+        resolve({ value: undefined })
+      })
+    }) as never,
+  )
+  on('tool.call', () => ({ result: EDIT_RESULT }))
+  await $.tool.call({ tool: 'Edit', file_path: '/repo/src/auth.ts', old_string: 'a', new_string: 'b' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.resize({ columns: 60, rows: 20, in: 'typer' })
+  await ui.advance(400)
+  expect(stopped).toBe(0)
+  await ui.unmount()
+  await clock.advance(1000)
+  expect(stopped).toBe(1)
 })
 
 test('the sound turns on and off from the pane and from /tecleo sonido', async ($, on) => {
@@ -552,10 +593,12 @@ test('the sound turns on and off from the pane and from /tecleo sonido', async (
   await $.tool.call({ tool: 'Edit', file_path: '/repo/src/auth.ts', old_string: 'a', new_string: 'b' })
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect(texts(await ui.drawn())).toContain('🔇 Sonido')
+  await clock.advance(80)
   expect(played).toHaveLength(0)
 
   await ui.press({ key: 'sonido' } as never)
   expect(texts(await ui.drawn())).toContain('🔊 Sonido')
+  await clock.advance(80)
   expect(played).toHaveLength(1)
 
   const off = await $.command.run({ command: 'tecleo', args: 'sonido' } as never)
@@ -563,6 +606,7 @@ test('the sound turns on and off from the pane and from /tecleo sonido', async (
   expect(texts(await ui.drawn())).toContain('🔇 Sonido')
   const again = await $.command.run({ command: 'tecleo', args: 'sonido' } as never)
   expect(again.text).toContain('activado')
+  await clock.advance(80)
   expect(played).toHaveLength(2)
   await ui.unmount()
 })
@@ -575,6 +619,10 @@ test('on Windows the clip plays through PowerShell from the plugin folder', () =
   expect(argv[0]).toBe('powershell.exe')
   expect(argv[4]).toContain("SoundPlayer 'C:\\Users\\o''neil\\tecleo.wav'")
   expect(argv[4]).toContain('PlayLooping()')
+  expect(argv[4]).toContain('AddSeconds(15)')
+  expect(argv[4]).toContain('Get-Process -Id $pp')
+  expect(pidOf('pid:4242\r\n.')).toBe(4242)
+  expect(pidOf('.')).toBeUndefined()
 })
 
 test('the volume picks a louder clip', { options: { sonido: true, volumen: 'alto' } } as never, async ($, on) => {
@@ -588,5 +636,8 @@ test('the volume picks a louder clip', { options: { sonido: true, volumen: 'alto
   })
   on('tool.call', () => ({ result: EDIT_RESULT }))
   await $.tool.call({ tool: 'Edit', file_path: '/repo/src/auth.ts', old_string: 'a', new_string: 'b' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  for (let i = 0; i < 3; i++) await clock.advance(80)
   expect(played[0]).toMatchObject({ clip: { asset: 'sounds/tecleo-alto.wav' } })
+  await ui.unmount()
 })

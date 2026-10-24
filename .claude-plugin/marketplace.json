@@ -8,7 +8,7 @@
       "name": "tecleo",
       "source": "./tecleo",
       "description": "Panel al lado del chat donde el código que Claude escribe o edita se va tecleando solo.",
-      "version": "0.4.3"
+      "version": "0.4.4"
     }
   ]
 }

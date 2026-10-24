@@ -14,7 +14,7 @@ import {
   summaryOf,
   terminalEntryOf,
 } from './entries'
-import { assetPath, isWindowsPath, windowsSoundArgv } from './sound'
+import { assetPath, isWindowsPath, pidOf, windowsSoundArgv } from './sound'
 import { MAX_RUSH, drawEntry, durationOf, remainingMs } from './view'
 
 const PANE = 'tecleo'
@@ -34,8 +34,9 @@ const SOUNDS = {
   alto: 'sounds/tecleo-alto.wav',
 } as const
 type Volume = keyof typeof SOUNDS
-// A loop on Windows stops by itself after this, whatever happens.
-const SOUND_MAX_MS = 10 * 60_000
+// The sound plays only while typing moves on: each step of it keeps the
+// sound going this long, so a pane closed mid-entry falls silent.
+const SOUND_LEASE_MS = 800
 
 const entries = atom({ plugin: 'tecleo', key: 'entries' } as const, [], {
   shape: 'entries-1',
@@ -111,6 +112,7 @@ let settings: Settings = {
 let idle: Timer | undefined
 let player: Timer | undefined
 let sound: AbortController | undefined
+let soundLease: Timer | undefined
 
 function pendingOf(list: readonly Entry[], head: number): Entry[] {
   return list.filter(entry => entry.id > head)
@@ -155,20 +157,41 @@ async function scheduleClose($: EngineInterface): Promise<void> {
   })
 }
 
-// The typing sound loops while an entry is typed, if it is turned on.
+function stopSound(): void {
+  soundLease?.cancel()
+  soundLease = undefined
+  sound?.abort()
+  sound = undefined
+}
+
+// Stops the sound when it must not play: turned off, paused, nothing left.
 async function syncSound($: EngineInterface): Promise<void> {
-  const head = (await queueOf($))[0]
-  const isTyping =
-    (await soundOn($)) &&
-    head !== undefined &&
-    head.kind !== 'terminal' &&
-    !(await read($, paused))
-  if (!isTyping) {
-    sound?.abort()
-    sound = undefined
+  if (
+    !(await soundOn($)) ||
+    (await read($, paused)) ||
+    (await queueOf($)).length === 0
+  ) {
+    stopSound()
+  }
+}
+
+// Typing moved on: the sound plays, or goes on playing, a moment longer.
+async function typed($: EngineInterface, entry: Entry): Promise<void> {
+  if (
+    entry.kind === 'terminal' ||
+    !(await soundOn($)) ||
+    (await read($, paused))
+  ) {
+    stopSound()
 
     return
   }
+  soundLease?.cancel()
+  soundLease = $.clock.after(SOUND_LEASE_MS, () => {
+    soundLease = undefined
+    sound?.abort()
+    sound = undefined
+  })
   if (sound !== undefined) return
   const stop = new AbortController()
   sound = stop
@@ -186,19 +209,35 @@ async function syncSound($: EngineInterface): Promise<void> {
     .finally(done)
 }
 
-// Loops the clip through PowerShell; leaving the read kills it, sound and all.
+// Loops the clip through PowerShell until `signal` aborts: one PowerShell
+// after another, each playing a while, each killed by its id when stopped.
 async function playOnWindows(
   $: EngineInterface,
   signal: AbortSignal,
 ): Promise<void> {
   const wav = assetPath($.plugin.root, SOUNDS[settings.volume])
-  const until = Date.now() + SOUND_MAX_MS
-  try {
-    for await (const _ of $.process.spawn({ argv: windowsSoundArgv(wav) })) {
-      if (signal.aborted || Date.now() > until) break
+  while (!signal.aborted) {
+    let pid: number | undefined
+    const kill = () => {
+      if (pid === undefined) return
+      void $.process
+        .run(['taskkill', '/PID', String(pid), '/F'])
+        .catch(() => undefined)
     }
-  } catch {
-    // No PowerShell: no sound.
+    signal.addEventListener('abort', kill, { once: true })
+    try {
+      for await (const { text } of $.process.spawn({ argv: windowsSoundArgv(wav) })) {
+        pid ??= pidOf(text)
+        if (signal.aborted) break
+      }
+    } catch {
+      // No PowerShell: no sound.
+      signal.removeEventListener('abort', kill)
+
+      return
+    }
+    signal.removeEventListener('abort', kill)
+    if (signal.aborted) kill()
   }
 }
 
@@ -319,6 +358,7 @@ async function tick($: EngineInterface): Promise<void> {
     return
   }
   await update($, stage, () => ({ id: head.id, elapsed }))
+  await typed($, head)
 }
 
 function startPlayer($: EngineInterface): void {
@@ -516,6 +556,12 @@ export const register: Register = (on, options) => {
 
   on('ui.message', async ($, e, next) => {
     const data = e.data as Partial<TyperPost> | null
+    if (typeof data?.typing === 'number') {
+      const head = (await queueOf($))[0]
+      if (head?.id === data.typing) await typed($, head)
+
+      return next(e)
+    }
     if (typeof data?.done !== 'number') return next(e)
     await finish($, data.done)
 

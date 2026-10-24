@@ -5,6 +5,7 @@ import { MAX_RUSH, drawEntry, durationOf } from './view'
 
 const FRAME_MS = 33
 const BLINK_FRAMES = 15
+const TYPING_FRAMES = 6
 
 type Typing = {
   /** The play under way (`playOf`), '' before any. */
@@ -62,6 +63,8 @@ const Typer: ClientModule<TyperProps, Typing> = (props, surface) => {
 
         return
       }
+      // Every few frames: still typing, so the sound goes on.
+      if (frames % TYPING_FRAMES === 0) surface.post({ typing: head.id })
       surface.setState({ ...now, elapsed })
     })
   }
